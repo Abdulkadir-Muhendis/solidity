@@ -39,12 +39,13 @@ using namespace boost::unit_test;
 namespace fs = boost::filesystem;
 
 
-SemanticTest::SemanticTest(string const& _filename, langutil::EVMVersion _evmVersion, vector<boost::filesystem::path> const& _vmPaths, bool enforceViaYul):
+SemanticTest::SemanticTest(string const& _filename, langutil::EVMVersion _evmVersion, vector<boost::filesystem::path> const& _vmPaths, bool enforceViaYul, bool enforceCompileToEwasm):
 	SolidityExecutionFramework(_evmVersion, _vmPaths),
 	EVMVersionRestrictedTestCase(_filename),
 	m_sources(m_reader.sources()),
 	m_lineOffset(m_reader.lineNumber()),
-	m_enforceViaYul(enforceViaYul)
+	m_enforceViaYul(enforceViaYul),
+	m_enforceCompileToEwasm(enforceCompileToEwasm)
 {
 	string choice = m_reader.stringSetting("compileViaYul", "default");
 	if (choice == "also")
@@ -104,7 +105,8 @@ SemanticTest::SemanticTest(string const& _filename, langutil::EVMVersion _evmVer
 TestCase::TestResult SemanticTest::run(ostream& _stream, string const& _linePrefix, bool _formatted)
 {
 	TestResult result = TestResult::Success;
-	bool compileViaYul = m_runWithYul || m_enforceViaYul;
+	bool compileViaYul = m_runWithYul || m_enforceViaYul || m_enforceCompileToEwasm;
+	bool compileToEwasm = m_runWithEwasm || m_enforceCompileToEwasm;
 
 	if (m_runWithoutYul)
 		result = runTest(_stream, _linePrefix, _formatted, false, false);
@@ -112,7 +114,7 @@ TestCase::TestResult SemanticTest::run(ostream& _stream, string const& _linePref
 	if (compileViaYul && result == TestResult::Success)
 		result = runTest(_stream, _linePrefix, _formatted, true, false);
 
-	if (m_runWithEwasm && result == TestResult::Success)
+	if (compileToEwasm && result == TestResult::Success)
 		result = runTest(_stream, _linePrefix, _formatted, true, true);
 
 	return result;
@@ -139,6 +141,7 @@ TestCase::TestResult SemanticTest::runTest(ostream& _stream, string const& _line
 		}
 
 		m_compileViaYulCanBeSet = false;
+		m_compileToEwasmCanBeSet = false;
 
 		if (_compileViaYul)
 			AnsiColorized(_stream, _formatted, {BOLD, CYAN}) << _linePrefix << "Running via Yul:" << endl;
@@ -234,6 +237,15 @@ TestCase::TestResult SemanticTest::runTest(ostream& _stream, string const& _line
 			return TestResult::Failure;
 		}
 
+		if (success && !m_runWithEwasm && _compileToEwasm)
+		{
+			m_compileToEwasmCanBeSet = true;
+			AnsiColorized(_stream, _formatted, {BOLD, YELLOW}) <<
+															   _linePrefix << endl <<
+															   _linePrefix << "Test can be compiled to ewasm and marked with compileToEwasm: false." << endl;
+			return TestResult::Failure;
+		}
+
 		if (!success && (m_runWithYul || !_compileViaYul))
 		{
 			AnsiColorized(_stream, _formatted, {BOLD, CYAN}) << _linePrefix << "Expected result:" << endl;
@@ -279,17 +291,17 @@ TestCase::TestResult SemanticTest::runTest(ostream& _stream, string const& _line
 	}
 	catch (boost::exception const&)
 	{
-		if (!_compileViaYul || m_runWithYul)
+		if ((!_compileViaYul && !_compileToEwasm) || m_runWithYul)
 			throw;
 	}
 	catch (std::exception const&)
 	{
-		if (!_compileViaYul || m_runWithYul)
+		if ((!_compileViaYul && !_compileToEwasm) || m_runWithYul)
 			throw;
 	}
 	catch (...)
 	{
-		if (!_compileViaYul || m_runWithYul)
+		if ((!_compileViaYul && !_compileToEwasm) || m_runWithYul)
 			throw;
 	}
 
@@ -355,6 +367,8 @@ void SemanticTest::printUpdatedSettings(ostream& _stream, string const& _linePre
 	_stream << _linePrefix << "// ====" << endl;
 	if (m_compileViaYulCanBeSet)
 		_stream << _linePrefix << "// compileViaYul: also\n";
+	if (m_compileToEwasmCanBeSet)
+		_stream << _linePrefix << "// compileToEwasm: also\n";
 	for (auto const& setting: settings)
 		if (!m_compileViaYulCanBeSet || setting.first != "compileViaYul")
 		_stream << _linePrefix << "// " << setting.first << ": " << setting.second << endl;
